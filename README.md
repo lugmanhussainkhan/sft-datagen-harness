@@ -8,6 +8,7 @@ data/              <bench>_<split>.jsonl
 src/benchmarks/    one module per benchmark: prompt(), score(), summarize()
 src/evaluate.py
 src/self_rewrite.py
+src/teacher_feedback.py
 src/prepare_gpqa.py
 ```
 
@@ -81,6 +82,45 @@ summary.json
 
 A stopped run loses nothing: rerun the same command and it resumes from the attempt files. The last four files are
 rebuilt from the attempt files at the end of every run. `--force` starts over.
+
+## Teacher feedback
+
+```bash
+uv run src/teacher_feedback.py --bench math --sample 1000 \
+    --student hosted_vllm/Qwen/Qwen2.5-3B-Instruct --teacher anthropic/claude-haiku-5-5
+```
+
+The student answers, a teacher reviews the attempt and writes feedback that points out the mistake without giving the
+answer away, and the student writes a new full solution with its earlier attempts and the feedback in context. This
+repeats for up to `--max-turns` (3) rounds per item. The teacher writes no solution tokens, so every accepted answer
+comes from the student.
+
+- **Turn 0** comes from `evaluate.py --train`'s `r0.jsonl` for the same student, `--sample` and `--limit` when that file
+  exists (`--initial` points elsewhere). Only the items it lacks are generated. The items are those of
+  `data/<bench>_train.jsonl`, drawn the same way as `evaluate.py --train --sample N`.
+- **Accepted** means not empty, not truncated and correct. After turn 0 the answer also must not mention earlier
+  attempts or feedback.
+- **The teacher** sees the problem, the reference solution, each attempt and what was wrong with it (wrong answer, no
+  answer, cut off, refers to earlier attempts), and keeps its own conversation across turns. Feedback that states the
+  answer in the bench's answer format (`\boxed{}`, or a full kk CONCLUSION) is sent back to be rewritten, up to 3 tries.
+- **The student** gets one user message: the eval prompt, then `--- Attempt n ---` / `--- Feedback on attempt n ---`
+  blocks. If a request is rejected (usually because the history no longer fits the context window), that item stops.
+
+Output goes to `outputs/teacher_feedback/<bench>_<student>_by_<teacher>/`:
+
+```
+feedback<t>.jsonl    every teacher try in round t (feedback, whether it reveals the answer), appended as each arrives
+turn<t>.jsonl        every student answer in round t (with the feedback it answered, and its score), appended as each arrives
+dialogues.jsonl      every item with its accepted response, accepted_turn and all its turns
+sft.jsonl            accepted responses (any turn) as user/assistant pairs with the plain eval prompt
+sft_gold.jsonl       gold solutions for the same items
+summary.json         accepted_at_turn, rejections per turn, feedback rewrites, ...
+```
+
+Every teacher and student response is written to disk the moment it arrives, and each item's next request is worked
+out from those files. So the run can be stopped at any point (Ctrl-C, a crash, a killed job) and only the requests in
+flight are lost. Rerun the same command to resume. Ctrl-C exits at once and still rebuilds the last four files from
+what has been written. `--force` starts over.
 
 ## Data sources
 
