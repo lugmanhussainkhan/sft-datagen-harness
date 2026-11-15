@@ -21,7 +21,7 @@ LEAK = re.compile(r"reference (?:solution|answer)|(?:given|provided|above|origin
                   r"|(?:solution|answer) (?:above|provided|given)|as (?:in|per) the reference", re.IGNORECASE)
 
 ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-ap.add_argument("--bench", required=True, choices=["math"], help="training set: data/<bench>_train.jsonl")
+ap.add_argument("--bench", required=True, choices=["math", "kk"], help="training set: data/<bench>_train.jsonl")
 ap.add_argument("--model", required=True, help="LiteLLM model string, e.g. hosted_vllm/<served-name>")
 ap.add_argument("--model-args", type=json.loads, default={}, help="JSON passed to litellm.completion; overrides bench defaults")
 ap.add_argument("--max-trials", type=int, default=4)

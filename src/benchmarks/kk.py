@@ -26,8 +26,30 @@ CONCLUSION:
 """
 
 
+REWRITE_PROMPT = """Below is a logic puzzle about knights and knaves, followed by a reference solution that is known to be correct.
+
+Solve the puzzle yourself and write the solution in your own words, the way you would normally explain it. Use the reference solution only to make sure your reasoning and your final answer are right. Do not copy its sentences or layout, and do not mention that you were given a reference.
+
+Puzzle:
+{quiz}
+
+Reference solution (for your eyes only):
+{solution}
+
+Now write your own solution. First explain your reasoning. At the end of your answer, you must clearly state the identity of each character by following the format:
+
+CONCLUSION:
+(1) ...
+(2) ...
+(3) ..."""
+
+
 def prompt(item):
     return PROMPT.format(quiz=item["quiz"])
+
+
+def rewrite_prompt(item):
+    return REWRITE_PROMPT.format(quiz=item["quiz"], solution=item["solution"])
 
 
 def score(item, response):

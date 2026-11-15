@@ -48,10 +48,23 @@ runs/<model>/<bench>/r<k>.summary.json
 Finished runs are skipped and interrupted ones resume. `--force` redoes the selected benches, `--limit N` writes to
 `runs/<model>_limitN/`. Each invocation ends with a table of every model under `runs/`.
 
+## Train-set generation
+
+```bash
+uv run src/evaluate.py --train --bench kk math --sample 1000 --runs 4 --model <strong model>
+```
+
+`--train` runs the same harness (prompt, request defaults, scoring) on `data/<bench>_train.jsonl` and writes to
+`outputs/train/<model>[_sample<N>]/`, with the same layout and resume behavior as `runs/`. Benches without a train split
+are skipped. Each bench also gets `sft.jsonl`: per item, the first run whose response is correct, not empty and not
+truncated, paired with the eval prompt. `sft_gold.jsonl` holds the gold solutions for the same items. `--runs` sets how many
+attempts each item gets (run *k* uses `seed + k`). `--sample N` picks the same items as `self_rewrite.py --sample N`.
+
 ## Self-rewrite
 
 ```bash
 uv run src/self_rewrite.py --bench math --model hosted_vllm/Qwen/Qwen2.5-3B-Instruct --sample 1000
+uv run src/self_rewrite.py --bench kk --model hosted_vllm/Qwen/Qwen2.5-3B-Instruct --sample 1000
 ```
 
 The model is shown the question and its reference solution and writes its own solution. Each item gets up to 4
@@ -63,4 +76,4 @@ items) and `summary.json`.
 
 IFEval (google-research@f8d6d14), IFBench (allenai/IFBench@cd189a9), MATH (aakaran/finetuning-with-sampling@b3af646),
 MMLU-Pro (TIGER-Lab/MMLU-Pro@b189ec7), GPQA Diamond (Idavidrein/gpqa),
-Knights and Knaves (K-and-K/knights-and-knaves@2f68547, test split).
+Knights and Knaves (K-and-K/knights-and-knaves@2f68547; `solution` in `kk_train.jsonl` is the dataset's step-by-step reasoning plus the CONCLUSION block).
