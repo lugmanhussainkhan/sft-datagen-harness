@@ -1,13 +1,12 @@
 # sft-data-generation
 
-Evaluation and SFT-data generation for the learning-vs-forgetting experiments. Prompts, data, graders and
-sampling match `~/Projects/lfm2.5-350m-data-forgetting`.
+Benchmarks and SFT-data generation for studying how the source of training data affects learning and forgetting.
+Models are called through [LiteLLM](https://docs.litellm.ai/docs/providers), so any vLLM server or hosted provider works.
 
 ```
-data/                  <bench>_<split>.jsonl
-src/benchmarks/        one module per benchmark: prompt(), score(), summarize() (+ official checker code)
+data/              <bench>_<split>.jsonl
+src/benchmarks/    one module per benchmark: prompt(), score(), summarize()
 src/evaluate.py
-src/report.py
 src/self_rewrite.py
 src/prepare_gpqa.py
 ```
@@ -19,29 +18,47 @@ uv sync
 HF_TOKEN=... uv run src/prepare_gpqa.py   # GPQA is gated: accept its terms on the Hub first
 ```
 
-Data sources: IFEval (google-research@f8d6d14), IFBench (allenai/IFBench@cd189a9), MATH L3–5 test/train
-(aakaran/finetuning-with-sampling@b3af646), MMLU-Pro (TIGER-Lab/MMLU-Pro@b189ec7), GPQA Diamond (Idavidrein/gpqa).
+For a vLLM server, either pass `api_base` in `--model-args` or `export HOSTED_VLLM_API_BASE=http://localhost:8000/v1`.
 
 ## Evaluate
 
 ```bash
-uv run src/evaluate.py --bench math --model hosted_vllm/LiquidAI/LFM2.5-350M \
-  --model-args '{"api_base": "http://localhost:8000/v1", "temperature": 0.1, "extra_body": {"top_k": 50, "repetition_penalty": 1.05}}'
-uv run src/report.py
+uv run src/evaluate.py --model hosted_vllm/Qwen/Qwen2.5-3B-Instruct --model-args '{"temperature": 0.1}'
+uv run src/evaluate.py --bench math gpqa --model hosted_vllm/Qwen/Qwen2.5-3B-Instruct
 ```
 
-`--bench` is one of `ifeval`, `ifbench`, `math`, `gpqa`, `mmlu_pro`. `--model-args` is passed to `litellm.completion`
-as-is and overrides the benchmark's defaults (e.g. `max_tokens`). Run *k* uses `seed + k`. Default runs: ifeval 3,
-gpqa 3, math 2, others 1. Results go to `results/<model>/<bench>_r<k>.jsonl` and `.summary.json`.
+| Bench | Items | Runs | Metric |
+|---|---|---|---|
+| `ifeval` | 541 | 3 | prompt-level strict accuracy |
+| `ifbench` | 300 | 1 | prompt-level strict accuracy |
+| `math` (MATH levels 3–5) | 1,024 | 2 | accuracy |
+| `gpqa` (Diamond) | 198 | 3 | accuracy |
+| `mmlu_pro` (5-shot) | 12,032 | 1 | accuracy |
+
+`--bench` defaults to all. `--model-args` is passed to `litellm.completion` and overrides the bench defaults
+(e.g. `max_tokens`). Run *k* uses `seed + k`.
+
+```
+runs/<model>/report.json                 mean of each bench's metric over its runs
+runs/<model>/<bench>/r<k>.jsonl          scored records, appended as answers arrive
+runs/<model>/<bench>/r<k>.summary.json
+```
+
+Finished runs are skipped and interrupted ones resume. `--force` redoes the selected benches, `--limit N` writes to
+`runs/<model>_limitN/`. Each invocation ends with a table of every model under `runs/`.
 
 ## Self-rewrite
 
 ```bash
-uv run src/self_rewrite.py --bench math --model hosted_vllm/LiquidAI/LFM2.5-350M --model-args '{...}' --sample 1000
+uv run src/self_rewrite.py --bench math --model hosted_vllm/Qwen/Qwen2.5-3B-Instruct --sample 1000
 ```
 
-The model gets the rewrite instruction, the question and the reference solution (`REWRITE_PROMPT` in
-`src/benchmarks/math`). It has up to 4 attempts. An attempt is kept only if it is not empty, not truncated, has the right
-answer (the benchmark's `score()`) and does not mention the reference. Output goes to
-`outputs/self_rewrite/<bench>_<model>/`: `rewrites.jsonl`, `sft.jsonl`, `sft_gold.jsonl` (same items, gold
-solutions) and `summary.json`.
+The model is shown the question and its reference solution and writes its own solution. Each item gets up to 4
+attempts; one is kept if it is not empty, not truncated, correct, and does not mention the reference. Output goes to
+`outputs/self_rewrite/<bench>_<model>/`: `rewrites.jsonl`, `sft.jsonl`, `sft_gold.jsonl` (gold solutions for the same
+items) and `summary.json`.
+
+## Data sources
+
+IFEval (google-research@f8d6d14), IFBench (allenai/IFBench@cd189a9), MATH (aakaran/finetuning-with-sampling@b3af646),
+MMLU-Pro (TIGER-Lab/MMLU-Pro@b189ec7), GPQA Diamond (Idavidrein/gpqa).

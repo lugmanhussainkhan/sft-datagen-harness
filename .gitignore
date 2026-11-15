@@ -1,6 +1,0 @@
-__pycache__/
-.venv/
-.DS_Store
-results/
-outputs/
-src/benchmarks/ifbench/.nltk_data/
