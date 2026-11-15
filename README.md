@@ -171,9 +171,9 @@ The student gets a step-by-step fill-in solving guide and writes the answer. The
 from fixed instructions, rules and answer format, the dataset's question verbatim, and only the "What each statement
 means" and "Template" sections of the generated guide. Correct answers are paired with the plain eval prompt, without the guide, so the model learns to solve unaided.
 
-- **Items** are the puzzles of `--items` (default `~/Projects/kk_claude-haiku-5-5/rewrites.jsonl`, the self-rewrite SFT
-  subset) that have a guide in `--guides` (default `data/kk_guides.jsonl`; guides cut off for
-  length are skipped), joined on `id`. `--sample N` draws N of `--items` (seed 0) and keeps those with a guide.
+- **Items** are the puzzles with a guide in `--guides` (default `data/kk_guides.jsonl`, 2,674 puzzles; guides cut off for
+  length are skipped), in the order of the self-rewrite subset's `train.jsonl`. Their question and gold solution come
+  from `--items` (default `data/kk_train_haiku.jsonl`), joined on `id`. `--sample N` draws N of these (seed 0).
 - **Runs, request args, scoring and resume** work as in `evaluate.py --train`: run *k* uses `seed + k`, `--model-args`
   overrides the kk defaults, records are appended as answers arrive and an interrupted run resumes. A run is skipped once
   every item is scored, so when the guides file has grown, rerunning only generates the new items. A request the server

@@ -3,9 +3,9 @@ Correct answers become SFT data paired with the plain eval prompt, without the g
 puzzle unaided. The prompt (GUIDED_PROMPT) is built here: instructions, rules and answer format are fixed text, the
 question is the dataset's quiz verbatim, and only "What each statement means" and "Template" come from the guide.
 
-Items are the rows of --items (default: the 2,674 puzzles of the kk self-rewrite SFT subset) that have a guide in
---guides with finish_reason != "length", joined on id, in --items order. --sample N draws N of --items (seed 0) and keeps
-those with a guide; --limit N then keeps the first N. The guides file may still be growing: rerun the same command later
+Items are the puzzles that have a guide in --guides (finish_reason != "length"), in guide order (the order of the
+self-rewrite subset's train.jsonl); their question and gold solution come from --items (default data/kk_train_haiku.jsonl),
+joined on id. --sample N draws N of these items (seed 0); --limit N then keeps the first N. The guides file may still be growing: rerun the same command later
 and only the new items are generated.
 
 Run k uses seed + k (models that reject seed differ only by sampling). Records are appended to r<k>.jsonl as answers
@@ -42,10 +42,10 @@ ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDe
 ap.add_argument("--model", required=True, help="LiteLLM model string of the student, e.g. hosted_vllm/<served-name>")
 ap.add_argument("--model-args", type=json.loads, default={}, help=f"JSON passed to litellm.completion; overrides {kk.REQUEST}")
 ap.add_argument("--guides", type=Path, default=ROOT / "data/kk_guides.jsonl")
-ap.add_argument("--items", type=Path, default=Path.home() / "Projects/kk_claude-haiku-5-5/rewrites.jsonl",
+ap.add_argument("--items", type=Path, default=ROOT / "data/kk_train_haiku.jsonl",
                 help="puzzles with id, quiz, names, answer, solution")
 ap.add_argument("--runs", type=int, default=1, help="attempts per item; run k uses seed + k")
-ap.add_argument("--sample", type=int, help="random subset of N of --items (seed 0), those with a guide kept")
+ap.add_argument("--sample", type=int, help="random subset of N of the guided items (seed 0)")
 ap.add_argument("--limit", type=int, help="first N items only")
 ap.add_argument("--concurrency", type=int, default=32)
 ap.add_argument("--out-dir", type=Path, help="default: outputs/guided/<model>[_sample<N>][_limit<N>]/kk")
@@ -118,13 +118,18 @@ def guided_prompt(item):
                                 conclusion=" ".join(f"({i}) {n} is a ___" for i, n in enumerate(item["names"], 1)))
 
 
-guides = {g["id"]: parts for g in read(args.guides)
+for path in (args.guides, args.items):
+    if not path.exists():
+        raise SystemExit(f"not found: {path}")
+guides = {g["id"]: {**parts, "idx": g.get("idx", 0)} for g in read(args.guides)
           if g.get("finish_reason") != "length" and g.get("guide") and (parts := guide_parts(g["guide"]))}
-items = list(read(args.items))
+items = sorted((item for item in read(args.items) if item["id"] in guides), key=lambda item: guides[item["id"]]["idx"])
 if args.sample:
     items = [items[i] for i in sorted(random.Random(0).sample(range(len(items)), args.sample))]
-items = [item for item in items if item["id"] in guides][: args.limit]
+items = items[: args.limit]
 print(f"{len(items)} items with a guide ({len(guides)} usable guides in {args.guides})")
+if not items:
+    raise SystemExit(f"no item of {args.items} has a guide in {args.guides}; check that the two files match")
 out_dir = args.out_dir or Path("outputs/guided") / (args.model.split("/")[-1] + (f"_sample{args.sample}" if args.sample else "")
                                                     + (f"_limit{args.limit}" if args.limit else "")) / "kk"
 out_dir.mkdir(parents=True, exist_ok=True)
