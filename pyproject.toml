@@ -1,0 +1,23 @@
+[project]
+name = "sft-data-generation"
+version = "0.1.0"
+description = "Benchmarks and SFT-data generation for learning-vs-forgetting experiments"
+requires-python = ">=3.11"
+dependencies = [
+    # litellm 1.82.7 and 1.82.8 on PyPI were malicious; the lower bound keeps them out.
+    "litellm>=1.83.0",
+    "tenacity",  # litellm needs it for num_retries
+    "tqdm>=4.66",
+    "huggingface_hub>=0.24",  # only for src/prepare_gpqa.py
+    # MATH grader (aakaran/finetuning-with-sampling)
+    "sympy>=1.12",
+    "pylatexenc>=2.10",
+    "numpy>=1.26",
+    # IFEval / IFBench official checkers
+    "absl-py",
+    "langdetect",
+    "nltk>=3.9",
+    "immutabledict",
+    "emoji",
+    "syllapy>=0.8.0",
+]
