@@ -12,6 +12,9 @@ from . import accuracy
 REQUEST = {"max_tokens": 16384}  # small models reason at length, even on 2-person puzzles
 RUNS = 1
 METRIC = "accuracy"
+# self_rewrite.py reads this instead of kk_train: the 6,018 train puzzles Claude Haiku 5.5 solved correctly, with its
+# solution as the reference (kk_train's own solutions follow one fixed template)
+REWRITE_DATA = "kk_train_haiku"
 PROMPT = """Your task is to solve a logical reasoning problem. You are given set of statements from which you must logically deduce the identity of a set of characters.
 
 You must infer the identity of each character. First, explain your reasoning. At the end of your answer, you must clearly state the identity of each character by following the format:

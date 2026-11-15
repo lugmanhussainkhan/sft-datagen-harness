@@ -21,7 +21,7 @@ LEAK = re.compile(r"reference (?:solution|answer)|(?:given|provided|above|origin
                   r"|(?:solution|answer) (?:above|provided|given)|as (?:in|per) the reference", re.IGNORECASE)
 
 ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-ap.add_argument("--bench", required=True, choices=["math", "kk"], help="training set: data/<bench>_train.jsonl")
+ap.add_argument("--bench", required=True, choices=["math", "kk"], help="training set: data/<bench>_train.jsonl, or the bench's REWRITE_DATA")
 ap.add_argument("--model", required=True, help="LiteLLM model string, e.g. hosted_vllm/<served-name>")
 ap.add_argument("--model-args", type=json.loads, default={}, help="JSON passed to litellm.completion; overrides bench defaults")
 ap.add_argument("--max-trials", type=int, default=4)
@@ -35,7 +35,8 @@ supported = litellm.get_supported_openai_params(model=model_name, custom_llm_pro
 SEEDABLE = supported is None or "seed" in supported  # e.g. Anthropic rejects seed; its runs differ only by sampling
 
 bench = importlib.import_module(f"benchmarks.{args.bench}")
-with open(Path(__file__).resolve().parents[1] / f"data/{args.bench}_train.jsonl") as f:
+data = getattr(bench, "REWRITE_DATA", f"{args.bench}_train")  # where the reference solutions come from
+with open(Path(__file__).resolve().parents[1] / f"data/{data}.jsonl") as f:
     items = [json.loads(line) for line in f]
 if args.sample:
     items = [items[i] for i in sorted(random.Random(0).sample(range(len(items)), args.sample))]

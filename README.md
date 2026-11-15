@@ -77,3 +77,6 @@ items) and `summary.json`.
 IFEval (google-research@f8d6d14), IFBench (allenai/IFBench@cd189a9), MATH (aakaran/finetuning-with-sampling@b3af646),
 MMLU-Pro (TIGER-Lab/MMLU-Pro@b189ec7), GPQA Diamond (Idavidrein/gpqa),
 Knights and Knaves (K-and-K/knights-and-knaves@2f68547; `solution` in `kk_train.jsonl` is the dataset's step-by-step reasoning plus the CONCLUSION block).
+`kk_train_haiku.jsonl` is the same with Claude Haiku 5.5's solution instead (`evaluate.py --train`, `reasoning_effort: medium`), kept
+for the 6,018 puzzles it solved correctly with a single conclusion. `self_rewrite.py --bench kk` uses it as the reference, so
+its `sft_gold.jsonl` holds Haiku's solutions and `--sample N` draws from these 6,018.
