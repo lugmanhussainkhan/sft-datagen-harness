@@ -17,7 +17,7 @@ import litellm
 from tqdm import tqdm
 
 litellm.suppress_debug_info = True
-BENCHES = ["ifeval", "ifbench", "math", "gpqa", "mmlu_pro"]
+BENCHES = ["ifeval", "ifbench", "math", "gpqa", "mmlu_pro", "kk"]
 
 ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
 ap.add_argument("--bench", nargs="+", choices=BENCHES, default=BENCHES, help="default: all")

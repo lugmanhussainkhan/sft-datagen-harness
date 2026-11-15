@@ -34,6 +34,7 @@ uv run src/evaluate.py --bench math gpqa --model hosted_vllm/Qwen/Qwen2.5-3B-Ins
 | `math` (MATH levels 3–5) | 1,024 | 2 | accuracy |
 | `gpqa` (Diamond) | 198 | 3 | accuracy |
 | `mmlu_pro` (5-shot) | 12,032 | 1 | accuracy |
+| `kk` (Knights and Knaves, 2–8 people) | 700 | 1 | accuracy (every identity right; `by_people` in the summary) |
 
 `--bench` defaults to all. `--model-args` is passed to `litellm.completion` and overrides the bench defaults
 (e.g. `max_tokens`). Run *k* uses `seed + k`.
@@ -61,4 +62,5 @@ items) and `summary.json`.
 ## Data sources
 
 IFEval (google-research@f8d6d14), IFBench (allenai/IFBench@cd189a9), MATH (aakaran/finetuning-with-sampling@b3af646),
-MMLU-Pro (TIGER-Lab/MMLU-Pro@b189ec7), GPQA Diamond (Idavidrein/gpqa).
+MMLU-Pro (TIGER-Lab/MMLU-Pro@b189ec7), GPQA Diamond (Idavidrein/gpqa),
+Knights and Knaves (K-and-K/knights-and-knaves@2f68547, test split).
