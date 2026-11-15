@@ -68,9 +68,19 @@ uv run src/self_rewrite.py --bench kk --model hosted_vllm/Qwen/Qwen2.5-3B-Instru
 ```
 
 The model is shown the question and its reference solution and writes its own solution. Each item gets up to 4
-attempts; one is kept if it is not empty, not truncated, correct, and does not mention the reference. Output goes to
-`outputs/self_rewrite/<bench>_<model>/`: `rewrites.jsonl`, `sft.jsonl`, `sft_gold.jsonl` (gold solutions for the same
-items) and `summary.json`.
+attempts (`--max-trials`); one is kept if it is not empty, not truncated, correct, and does not mention the reference.
+Attempt *t* goes only to items no earlier attempt accepted. Output goes to `outputs/self_rewrite/<bench>_<model>/`:
+
+```
+attempt<t>.jsonl     one scored record per item sent in attempt t, appended as each response arrives
+rewrites.jsonl       every item with its accepted response and all its attempts
+sft.jsonl            accepted rewrites as user/assistant pairs with the eval prompt
+sft_gold.jsonl       gold solutions for the same items
+summary.json
+```
+
+A stopped run loses nothing: rerun the same command and it resumes from the attempt files. The last four files are
+rebuilt from the attempt files at the end of every run. `--force` starts over.
 
 ## Data sources
 
