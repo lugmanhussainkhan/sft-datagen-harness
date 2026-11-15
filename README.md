@@ -40,7 +40,8 @@ uv run src/evaluate.py --bench math gpqa --model hosted_vllm/Qwen/Qwen2.5-3B-Ins
 | `kk` (Knights and Knaves, 2–8 people) | 700 | 1 | accuracy (every identity right; `by_people` in the summary) |
 
 `--bench` defaults to all. `--model-args` is passed to `litellm.completion` and overrides the bench defaults
-(e.g. `max_tokens`). Run *k* uses `seed + k`.
+(e.g. `max_tokens`). Run *k* uses `seed + k`. Every request of every selected bench and run goes through one pool of
+`--concurrency` threads, so runs overlap: the next run's requests start while the previous run's last ones finish.
 
 ```
 runs/<model>/report.json                 mean of each bench's metric over its runs
@@ -58,10 +59,13 @@ uv run src/evaluate.py --train --bench kk math --sample 1000 --runs 4 --model <s
 ```
 
 `--train` runs the same harness (prompt, request defaults, scoring) on `data/<bench>_train.jsonl` and writes to
-`outputs/train/<model>[_sample<N>]/`, with the same layout and resume behavior as `runs/`. Benches without a train split
-are skipped. Each bench also gets `sft.jsonl`: per item, the first run whose response is correct, not empty and not
-truncated, paired with the eval prompt. `sft_gold.jsonl` holds the gold solutions for the same items. `--runs` sets how many
-attempts each item gets (run *k* uses `seed + k`). `--sample N` picks the same items as `self_rewrite.py --sample N`.
+`outputs/train/<model>[_sample<N>]/`. Benches without a train split are skipped. `--runs` is the maximum number of tries
+per item: try *k* + 1 goes only to items whose tries so far gave no correct, non-empty, untruncated response, and it is
+queued as soon as try *k* comes back, in the same pool as everything else. Try *k* uses `seed + k` and is written to
+`r<k>.jsonl`; interrupted runs resume, and rerunning with a larger `--runs` gives unsolved items more tries. Each bench
+gets `summary.json` (solve rate, the try that solved each item, requests), `sft.jsonl` (per solved item, its accepted
+response paired with the eval prompt) and `sft_gold.jsonl` (the gold solutions for the same items). `--all-runs` sends
+every run to every item instead. `--sample N` picks the same items as `self_rewrite.py --sample N`.
 
 ## Self-rewrite
 
@@ -72,7 +76,8 @@ uv run src/self_rewrite.py --bench kk --model hosted_vllm/Qwen/Qwen2.5-3B-Instru
 
 The model is shown the question and its reference solution and writes its own solution. Each item gets up to 4
 attempts (`--max-trials`); one is kept if it is not empty, not truncated, correct, and does not mention the reference.
-Attempt *t* goes only to items no earlier attempt accepted. Output goes to `outputs/self_rewrite/<bench>_<model>/`:
+Attempt *t* goes only to items no earlier attempt accepted, and is queued as soon as attempt *t* - 1 comes back, so
+attempts overlap in one pool. Output goes to `outputs/self_rewrite/<bench>_<model>/`:
 
 ```
 attempt<t>.jsonl     one scored record per item sent in attempt t, appended as each response arrives
@@ -137,7 +142,8 @@ of the student's correct answers to other puzzles (fixed, so Anthropic caches it
 reference solution and the student's four attempts at that puzzle, each marked with how its final answer scored.
 
 - `prepare_student_style.py` writes `data/kk_student_style.jsonl`: the 2,674 puzzles of the self-rewrite SFT subset
-  (`--train-set`) with Haiku's solution and the four `evaluate.py --train` attempts (`--trials`, `r0`–`r3.jsonl`). It also
+  (`--train-set`) with Haiku's solution and the four `evaluate.py --train --all-runs` attempts (`--trials`,
+  `r0`–`r3.jsonl`). It also
   writes `data/kk_student_style_examples.jsonl`, the few-shot examples (`EXAMPLES`, picked by hand). The base model's
   correct answers on 3+ people almost always contain a wrong step somewhere, so the teacher is told to copy their style
   but not their logic.
@@ -164,7 +170,8 @@ each statement means, and a step-by-step template whose blanks the student fills
 ## Guided generation (kk)
 
 ```bash
-uv run src/guided_generation.py --model hosted_vllm/Qwen/Qwen2.5-1.5B-Instruct --runs 4
+uv run src/guided_generation.py --model hosted_vllm/Qwen/Qwen2.5-1.5B-Instruct --runs 8 \
+    --model-args '{"api_base": "http://localhost:8000/v1", "temperature": 0.6}'
 ```
 
 The student gets a step-by-step fill-in solving guide and writes the answer. The prompt (`GUIDED_PROMPT`) is built
@@ -174,17 +181,18 @@ means" and "Template" sections of the generated guide. Correct answers are paire
 - **Items** are the puzzles with a guide in `--guides` (default `data/kk_guides.jsonl`, 2,674 puzzles; guides cut off for
   length are skipped), in the order of the self-rewrite subset's `train.jsonl`. Their question and gold solution come
   from `--items` (default `data/kk_train_haiku.jsonl`), joined on `id`. `--sample N` draws N of these (seed 0).
-- **Runs, request args, scoring and resume** work as in `evaluate.py --train`: run *k* uses `seed + k`, `--model-args`
-  overrides the kk defaults, records are appended as answers arrive and an interrupted run resumes. A run is skipped once
-  every item is scored, so when the guides file has grown, rerunning only generates the new items. A request the server
-  rejects (usually a prompt that does not fit the context) is recorded as empty with its `error`. `--force` starts over.
+- **Tries, request args, scoring and resume** work as in `evaluate.py --train`: `--runs` is the maximum number of tries
+  per item, try *k* + 1 goes only to unsolved items and is queued as soon as try *k* comes back, try *k* uses `seed + k`,
+  `--model-args` overrides the kk defaults, records are appended as answers arrive and an interrupted run resumes.
+  Rerunning with a larger `--runs` gives unsolved items more tries. A request the server rejects (usually a prompt that
+  does not fit the context) is recorded as empty with its `error` and not retried. `--force` starts over.
 
 Output goes to `outputs/guided/<model>[_sample<N>][_limit<N>]/kk/` (`--out-dir` to change it):
 
 ```
-r<k>.jsonl           scored records (guided prompt, response, pred, correct), appended as answers arrive
-r<k>.summary.json    accuracy, by_people, truncated, empty, rejected
-sft.jsonl            per item, the first run whose response is correct, not empty and not truncated, with the eval prompt
+r<k>.jsonl           try k's scored records (guided prompt, response, pred, correct), appended as answers arrive
+summary.json         solve rate (overall and by people), the try that solved each item, requests, truncated, rejected
+sft.jsonl            per solved item, its accepted response (correct, not empty, not truncated), with the eval prompt
 sft_gold.jsonl       gold solutions for the same items
 ```
 

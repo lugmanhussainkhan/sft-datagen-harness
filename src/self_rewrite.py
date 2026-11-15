@@ -1,9 +1,10 @@
 """Self-rewrite: the model sees the instruction, a training question and its reference solution, and writes its own.
 Up to --max-trials attempts per item (seed + t); kept if not empty, not truncated, correct, and not mentioning the reference.
 
-Attempt t is sent only for items no earlier attempt accepted. Each response is scored and appended to
-<out-dir>/attempt<t>.jsonl as soon as it arrives, so a stopped run loses nothing: rerunning the same command resumes
-where it stopped. rewrites.jsonl (every item with all its attempts), sft.jsonl, sft_gold.jsonl and summary.json are
+Attempt t is sent only for items no earlier attempt accepted, and it is queued as soon as attempt t - 1 comes back, all in
+one pool of --concurrency threads, so attempts overlap instead of waiting for each other. Each response is scored and
+appended to <out-dir>/attempt<t>.jsonl as soon as it arrives, so a stopped run loses nothing: rerunning the same command
+resumes where it stopped. rewrites.jsonl (every item with all its attempts), sft.jsonl, sft_gold.jsonl and summary.json are
 rebuilt from the attempt files at the end. --force starts over.
 
     uv run src/self_rewrite.py --bench math --model hosted_vllm/LiquidAI/LFM2.5-350M --model-args '{"api_base": "http://localhost:8000/v1"}'
@@ -15,12 +16,12 @@ import json
 import random
 import re
 from collections import Counter
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 import httpx
 import litellm
-from tqdm import tqdm
+
+from scheduler import answer, append, drive, read_jsonl, reopen, seeded
 
 litellm.suppress_debug_info = True
 LEAK = re.compile(r"reference (?:solution|answer)|(?:given|provided|above|original) (?:solution|answer)"
@@ -61,71 +62,63 @@ if args.force:
         path.unlink(missing_ok=True)
 
 
-def load(path):
-    """Records already written to an attempt file, by id; a last line cut short by an interruption is dropped."""
-    rows = {}
-    if path.exists():
-        with open(path) as f:
-            for line in f:
-                try:
-                    row = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                rows[row["id"]] = row
-    return rows
-
-
-def judge(item, r, t, seed):
-    text = (r.choices[0].message.content or "").rpartition("</think>")[2].strip()
-    finish = r.choices[0].finish_reason
+def judge(item, response, t, seed):
+    text, finish, _ = answer(response)
     reason = ("empty" if not text else "truncated" if finish == "length"
               else "wrong answer" if not bench.score(item, text)["correct"]
               else "mentions the reference" if LEAK.search(text) else None)
     return {"id": item["id"], "trial": t, "seed": seed, "response": text, "finish_reason": finish, "rejected": reason}
 
 
+done, files = {}, {}  # per attempt t: the records written so far (by id), and the open attempt<t>.jsonl
+for t in range(1, args.max_trials + 1):
+    rows = read_jsonl(out_dir / f"attempt{t}.jsonl")  # resume: keep what an interrupted run already wrote
+    done[t], files[t] = {row["id"]: row for row in rows}, reopen(out_dir / f"attempt{t}.jsonl", rows)
+
+
+def next_trial(item, start=1):
+    """The first attempt >= start this item has no record for, unless an earlier one was accepted or none is left."""
+    for t in range(1, args.max_trials + 1):
+        row = done[t].get(item["id"])
+        if row is not None and not row["rejected"]:
+            return None
+        if row is None and t >= start:
+            return t
+    return None
+
+
+def call(job):
+    t, item = job
+    return litellm.completion(model=args.model, messages=[{"role": "user", "content": bench.rewrite_prompt(item)}],
+                              **seeded(model_args, t - 1, SEEDABLE))
+
+
+def handle(job, response):
+    t, item = job
+    row = done[t][item["id"]] = judge(item, response, t, seeded(model_args, t - 1, SEEDABLE).get("seed"))
+    append(files[t], row)
+    return [(t_next, item)] if row["rejected"] and (t_next := next_trial(item, t + 1)) else []
+
+
+jobs = [(t, item) for item in items if (t := next_trial(item))]
+print(f"{len(items) - len(jobs)} items finished already, {len(jobs)} to go (up to {args.max_trials} attempts each)")
+try:
+    drive(jobs, call, handle, args.concurrency, desc="rewrite requests")
+finally:
+    for f in files.values():
+        f.close()
+
 attempts = {item["id"]: [] for item in items}
 accepted = {}
-pending = items
-for t in range(1, args.max_trials + 1):
-    if not pending:
-        break
-    trial_args = {**model_args, "seed": model_args.get("seed", 0) + t - 1}
-    if not SEEDABLE:
-        del trial_args["seed"]
-    path = out_dir / f"attempt{t}.jsonl"
-    done = load(path)  # resume: keep what an interrupted attempt already wrote
-    todo = [item for item in pending if item["id"] not in done]
-    # rewrite the file without a cut-short last line, atomically, then append each completion as it arrives
-    tmp = path.with_suffix(".tmp")
-    tmp.write_text("".join(json.dumps(r, ensure_ascii=False) + "\n" for r in done.values()))
-    tmp.replace(path)
-    if todo:
-        pool = ThreadPoolExecutor(args.concurrency)
-        try:
-            with open(path, "a") as f:
-                futures = {pool.submit(litellm.completion, model=args.model, **trial_args,
-                                       messages=[{"role": "user", "content": bench.rewrite_prompt(item)}]): item
-                           for item in todo}
-                for fut in tqdm(as_completed(futures), total=len(todo), desc=f"attempt {t}"):
-                    item = futures[fut]
-                    done[item["id"]] = judge(item, fut.result(), t, trial_args.get("seed"))
-                    f.write(json.dumps(done[item["id"]], ensure_ascii=False) + "\n")
-                    f.flush()
-        finally:
-            pool.shutdown(wait=False, cancel_futures=True)  # Ctrl-C shouldn't wait for every queued request
-
-    attempted, still = pending, []
-    for item in attempted:
-        row = done[item["id"]]
+for item in items:  # each item's attempts in order, up to the accepted one
+    for t in range(1, args.max_trials + 1):
+        row = done[t].get(item["id"])
+        if row is None:
+            break
         attempts[item["id"]].append({k: v for k, v in row.items() if k != "id"})
-        if row["rejected"]:
-            still.append(item)
-        else:
+        if not row["rejected"]:
             accepted[item["id"]] = row["response"]
-    pending = still
-    resumed = len(attempted) - len(todo)
-    print(f"attempt {t}: {len(accepted)} accepted, {len(pending)} left" + (f" ({resumed} read from {path})" if resumed else ""))
+            break
 
 kept = [item for item in items if item["id"] in accepted]
 files = {  # the consolidated outputs, rebuilt from the attempt files on every run

@@ -5,19 +5,21 @@ question is the dataset's quiz verbatim, and only "What each statement means" an
 
 Items are the puzzles that have a guide in --guides (finish_reason != "length"), in guide order (the order of the
 self-rewrite subset's train.jsonl); their question and gold solution come from --items (default data/kk_train_haiku.jsonl),
-joined on id. --sample N draws N of these items (seed 0); --limit N then keeps the first N. The guides file may still be growing: rerun the same command later
-and only the new items are generated.
+joined on id. --sample N draws N of these items (seed 0); --limit N then keeps the first N.
 
-Run k uses seed + k (models that reject seed differ only by sampling). Records are appended to r<k>.jsonl as answers
-arrive; an interrupted run resumes from it, and a run with every item scored is skipped. --force starts over.
+--runs is the maximum number of tries per item. Try k + 1 is sent only for items whose tries so far gave no correct,
+non-empty, untruncated response, and it is queued as soon as try k comes back, all in one pool of --concurrency threads,
+so the GPU never waits for a run to drain. Try k uses seed + k and is appended to r<k>.jsonl as it arrives. Rerun the same
+command to resume an interrupted run, or with a larger --runs to give unsolved items more tries. --force starts over. A
+request the server rejects (usually a prompt that does not fit the context) is recorded with its error and not retried.
 
-    uv run src/guided_generation.py --model hosted_vllm/Qwen/Qwen2.5-1.5B-Instruct --runs 4 \\
-        --model-args '{"api_base": "http://localhost:8000/v1"}'
+    uv run src/guided_generation.py --model hosted_vllm/Qwen/Qwen2.5-1.5B-Instruct --runs 8 \\
+        --model-args '{"api_base": "http://localhost:8000/v1", "temperature": 0.6}'
 
 outputs/guided/<model>[_sample<N>][_limit<N>]/kk/ (or --out-dir):
-    r<k>.jsonl           scored records (id, people, prompt, response, finish_reason, pred, correct, ...)
-    r<k>.summary.json    accuracy, by_people, truncated, empty, rejected, request args
-    sft.jsonl            per item, the first run's correct, non-empty, untruncated response, paired with the eval prompt
+    r<k>.jsonl           try k's scored records (id, people, prompt, response, finish_reason, pred, correct, ...)
+    summary.json         solved items, the try that solved them, solve rate by people, requests, request args
+    sft.jsonl            per solved item, its accepted response paired with the eval prompt
                          (--keep-guide-prompt: with the guided prompt instead)
     sft_gold.jsonl       gold solutions for the same items, paired with the eval prompt
 """
@@ -26,14 +28,13 @@ import argparse
 import json
 import random
 import re
-from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import httpx
 import litellm
-from tqdm import tqdm
 
 from benchmarks import kk
+from scheduler import answer, append, drive, read_jsonl, reopen, seeded
 
 litellm.suppress_debug_info = True
 ROOT = Path(__file__).resolve().parents[1]
@@ -44,7 +45,7 @@ ap.add_argument("--model-args", type=json.loads, default={}, help=f"JSON passed 
 ap.add_argument("--guides", type=Path, default=ROOT / "data/kk_guides.jsonl")
 ap.add_argument("--items", type=Path, default=ROOT / "data/kk_train_haiku.jsonl",
                 help="puzzles with id, quiz, names, answer, solution")
-ap.add_argument("--runs", type=int, default=1, help="attempts per item; run k uses seed + k")
+ap.add_argument("--runs", type=int, default=1, help="maximum tries per item; try k uses seed + k")
 ap.add_argument("--sample", type=int, help="random subset of N of the guided items (seed 0)")
 ap.add_argument("--limit", type=int, help="first N items only")
 ap.add_argument("--concurrency", type=int, default=32)
@@ -58,17 +59,6 @@ litellm.sync_transport = httpx.HTTPTransport(limits=pool_limits)
 model_name, provider, *_ = litellm.get_llm_provider(args.model)
 supported = litellm.get_supported_openai_params(model=model_name, custom_llm_provider=provider)
 SEEDABLE = supported is None or "seed" in supported  # e.g. Anthropic rejects seed; its runs differ only by sampling
-
-
-def read(path):
-    """Records in a .jsonl; a last line cut short (an interrupted run, or a file still being written) is dropped."""
-    if path.exists():
-        with open(path) as f:
-            for line in f:
-                try:
-                    yield json.loads(line)
-                except json.JSONDecodeError:
-                    continue
 
 
 # The student prompt is built here; only "What each statement means" and "Template" are taken from the generated guide.
@@ -121,9 +111,9 @@ def guided_prompt(item):
 for path in (args.guides, args.items):
     if not path.exists():
         raise SystemExit(f"not found: {path}")
-guides = {g["id"]: {**parts, "idx": g.get("idx", 0)} for g in read(args.guides)
+guides = {g["id"]: {**parts, "idx": g.get("idx", 0)} for g in read_jsonl(args.guides)
           if g.get("finish_reason") != "length" and g.get("guide") and (parts := guide_parts(g["guide"]))}
-items = sorted((item for item in read(args.items) if item["id"] in guides), key=lambda item: guides[item["id"]]["idx"])
+items = sorted((item for item in read_jsonl(args.items) if item["id"] in guides), key=lambda item: guides[item["id"]]["idx"])
 if args.sample:
     items = [items[i] for i in sorted(random.Random(0).sample(range(len(items)), args.sample))]
 items = items[: args.limit]
@@ -135,78 +125,91 @@ out_dir = args.out_dir or Path("outputs/guided") / (args.model.split("/")[-1] + 
 out_dir.mkdir(parents=True, exist_ok=True)
 
 
-def complete(item, kw):
-    """One guided request; a rejected one (most often a prompt that doesn't fit the context) comes back as None."""
+def accepted(row):
+    """A response worth keeping: correct, not empty, not cut off."""
+    return bool(row.get("correct") and row["response"] and row["finish_reason"] != "length")
+
+
+model_args = {"num_retries": 3, **kk.REQUEST, **args.model_args}
+if args.force:
+    for path in [*out_dir.glob("r*.jsonl"), *out_dir.glob("r*.summary.json"),
+                 *(out_dir / n for n in ("summary.json", "sft.jsonl", "sft_gold.jsonl"))]:
+        path.unlink(missing_ok=True)
+records, files = {}, {}  # per try k: the records written so far (by id), and the open r<k>.jsonl
+for k in range(args.runs):
+    rows = read_jsonl(out_dir / f"r{k}.jsonl")  # resume: keep what an interrupted run already scored
+    records[k], files[k] = {row["id"]: row for row in rows}, reopen(out_dir / f"r{k}.jsonl", rows)
+
+
+def finished(item):
+    """Solved, rejected by the server, or out of tries."""
+    rows = [records[k][item["id"]] for k in records if item["id"] in records[k]]
+    return any(accepted(r) or "error" in r for r in rows) or next_try(item) is None
+
+
+def next_try(item, start=0):
+    return next((k for k in range(start, args.runs) if item["id"] not in records[k]), None)
+
+
+def call(job):
+    """One guided request; a rejected one (most often a prompt that doesn't fit the context) comes back as an error."""
+    k, item = job
     try:
-        return litellm.completion(model=args.model, messages=[{"role": "user", "content": guided_prompt(item)}], **kw), None
+        return litellm.completion(model=args.model, messages=[{"role": "user", "content": guided_prompt(item)}],
+                                  **seeded(model_args, k, SEEDABLE)), None
     except litellm.BadRequestError as e:
         return None, f"{type(e).__name__}: {str(e)[:500]}"
 
 
-for k in range(args.runs):
-    out = out_dir / f"r{k}.jsonl"
-    summary_path = out.with_suffix(".summary.json")
-    if args.force:
-        out.unlink(missing_ok=True)
-        summary_path.unlink(missing_ok=True)
-    model_args = {"num_retries": 3, **kk.REQUEST, **args.model_args}
-    if SEEDABLE:
-        model_args["seed"] = model_args.get("seed", 0) + k
-    else:
-        model_args.pop("seed", None)
+def handle(job, result):
+    k, item = job
+    response, error = result
+    text, finish, reasoning = answer(response) if response else ("", None, None)
+    row = {"id": item["id"], "people": item["people"], "prompt": guided_prompt(item), "response": text,
+           "finish_reason": finish, "reasoning": reasoning, **({"error": error} if error else {}), **kk.score(item, text)}
+    records[k][item["id"]] = row
+    append(files[k], row)
+    if not accepted(row) and not error and (k_next := next_try(item, k + 1)) is not None:
+        return [(k_next, item)]
+    return []
 
-    records = {row["id"]: row for row in read(out)}  # resume: keep what an interrupted run already scored
-    todo = [item for item in items if item["id"] not in records]
-    if summary_path.exists() and not todo:
-        print(f"{summary_path} exists, skipping")
-        continue
 
-    pool = ThreadPoolExecutor(args.concurrency)
-    try:
-        with open(out, "w") as f:
-            f.writelines(json.dumps(r, ensure_ascii=False) + "\n" for r in records.values())
-            responses = pool.map(lambda item, kw=model_args: complete(item, kw), todo)
-            for item, (r, error) in zip(todo, tqdm(responses, total=len(todo), desc=f"guided kk r{k}")):
-                if r is None:
-                    text, finish, reasoning = "", None, None
-                else:
-                    text = r.choices[0].message.content or ""
-                    text = "" if text.lstrip().startswith("<think>") and "</think>" not in text else text  # cut off while thinking
-                    text = text.rpartition("</think>")[2].strip()  # only the answer is scored
-                    finish, reasoning = r.choices[0].finish_reason, getattr(r.choices[0].message, "reasoning_content", None)
-                records[item["id"]] = {"id": item["id"], "people": item["people"], "prompt": guided_prompt(item),
-                                       "response": text, "finish_reason": finish, "reasoning": reasoning,
-                                       **({"error": error} if error else {}), **kk.score(item, text)}
-                f.write(json.dumps(records[item["id"]], ensure_ascii=False) + "\n")
-                f.flush()
-    finally:
-        pool.shutdown(wait=False, cancel_futures=True)  # Ctrl-C shouldn't wait for every queued request
+jobs = [(next_try(item), item) for item in items if not finished(item)]
+print(f"{len(items) - len(jobs)} items finished already, {len(jobs)} to go (up to {args.runs} tries each)")
+try:
+    drive(jobs, call, handle, args.concurrency, desc="guided kk requests")
+finally:
+    for f in files.values():
+        f.close()
 
-    done = [records[item["id"]] for item in items]
-    summary = {"metric": kk.METRIC, **kk.summarize(done), "n": len(done),
-               "truncated": sum(r["finish_reason"] == "length" for r in done),
-               "empty": sum(not r["response"] for r in done),
-               "rejected": sum("error" in r for r in done),
-               "model": args.model, "model_args": model_args, "guides": str(args.guides), "items": str(args.items),
-               "sample": args.sample, "limit": args.limit}
-    summary_path.write_text(json.dumps(summary, indent=2))
-    print(f"guided kk r{k}: accuracy {100 * summary['accuracy']:.2f} "
-          f"(truncated {summary['truncated']}, empty {summary['empty']}, rejected {summary['rejected']})")
-
-# per item, the first run's correct, complete response becomes an SFT example
-kept = {}
-for k in range(args.runs):
-    out = out_dir / f"r{k}.jsonl"
-    if not out.with_suffix(".summary.json").exists():
-        continue
-    for row in read(out):
-        if row.get("correct") and row["response"] and row["finish_reason"] != "length":
-            kept.setdefault(row["id"], row)
+# per item, the first try's accepted response becomes an SFT example
+kept, solved_at, by_people = {}, {}, {}
+for item in items:
+    by_people.setdefault(item["people"], [0, 0])[1] += 1
+    for k in range(args.runs):
+        row = records[k].get(item["id"])
+        if row and accepted(row):
+            kept[item["id"]] = row
+            solved_at[k + 1] = solved_at.get(k + 1, 0) + 1
+            by_people[item["people"]][0] += 1
+            break
 kept_items = [item for item in items if item["id"] in kept]
-files = {"sft.jsonl": [[{"role": "user", "content": kept[item["id"]]["prompt"] if args.keep_guide_prompt else kk.prompt(item)},
-                        {"role": "assistant", "content": kept[item["id"]]["response"]}] for item in kept_items],
-         "sft_gold.jsonl": [[{"role": "user", "content": kk.prompt(item)},
-                             {"role": "assistant", "content": item["solution"]}] for item in kept_items]}
-for fname, rows in files.items():
+outputs = {"sft.jsonl": [[{"role": "user", "content": kept[item["id"]]["prompt"] if args.keep_guide_prompt else kk.prompt(item)},
+                          {"role": "assistant", "content": kept[item["id"]]["response"]}] for item in kept_items],
+           "sft_gold.jsonl": [[{"role": "user", "content": kk.prompt(item)},
+                               {"role": "assistant", "content": item["solution"]}] for item in kept_items]}
+for fname, rows in outputs.items():
     (out_dir / fname).write_text("".join(json.dumps({"messages": m}, ensure_ascii=False) + "\n" for m in rows))
-print(f"guided kk: {len(kept_items)}/{len(items)} items kept for sft.jsonl ({args.runs} runs) -> {out_dir}")
+tries = [r for rs in records.values() for r in rs.values()]
+unfinished = sum(not finished(item) for item in items)
+summary = {"solve_rate": len(kept) / len(items), "items": len(items), "solved": len(kept),
+           "solved_at_try": dict(sorted(solved_at.items())),
+           "solve_rate_by_people": {n: s / t for n, (s, t) in sorted(by_people.items())},
+           "unfinished": unfinished, "max_tries": args.runs, "requests": len(tries),
+           "accuracy_per_request": sum(r["correct"] for r in tries) / len(tries) if tries else None,
+           "truncated": sum(r["finish_reason"] == "length" for r in tries), "empty": sum(not r["response"] for r in tries),
+           "rejected": sum("error" in r for r in tries), "model": args.model, "model_args": model_args,
+           "guides": str(args.guides), "items_file": str(args.items), "sample": args.sample, "limit": args.limit}
+(out_dir / "summary.json").write_text(json.dumps(summary, indent=2))
+print(f"guided kk: {len(kept)}/{len(items)} items solved within {args.runs} tries, kept for sft.jsonl "
+      f"({len(tries)} requests" + (f", {unfinished} unfinished: rerun to resume" if unfinished else "") + f") -> {out_dir}")

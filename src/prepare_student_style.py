@@ -2,7 +2,8 @@
 
 data/kk_student_style.jsonl: one row per puzzle of --train-set (the self-rewrite SFT subset, user/assistant pairs
 without ids, matched to kk_train_haiku.jsonl by quiz), with Haiku's reference solution and the student's four attempts
-from evaluate.py --train (r0..r3.jsonl in --trials).
+from evaluate.py --train --all-runs (r0..r3.jsonl in --trials; without --all-runs, solved puzzles get no
+further attempts).
 
 data/kk_student_style_examples.jsonl: the few-shot examples, the student's own correct answers to puzzles outside
 --train-set. They were picked by hand (EXAMPLES): the base model's correct answers on 3+ people almost always reach the
