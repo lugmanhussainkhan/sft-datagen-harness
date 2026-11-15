@@ -169,15 +169,19 @@ def handle(job, result):
            "finish_reason": finish, "reasoning": reasoning, **({"error": error} if error else {}), **kk.score(item, text)}
     records[k][item["id"]] = row
     append(files[k], row)
+    if accepted(row):
+        solved.add(item["id"])
     if not accepted(row) and not error and (k_next := next_try(item, k + 1)) is not None:
         return [(k_next, item)]
     return []
 
 
+solved = {item["id"] for item in items if any(accepted(records[k][item["id"]]) for k in records if item["id"] in records[k])}
 jobs = [(next_try(item), item) for item in items if not finished(item)]
 print(f"{len(items) - len(jobs)} items finished already, {len(jobs)} to go (up to {args.runs} tries each)")
 try:
-    drive(jobs, call, handle, args.concurrency, desc="guided kk requests")
+    drive(jobs, call, handle, args.concurrency, desc="guided kk items",
+          status=lambda: {"solved": f"{len(solved)}/{len(items)}"})
 finally:
     for f in files.values():
         f.close()

@@ -97,13 +97,17 @@ def handle(job, response):
     t, item = job
     row = done[t][item["id"]] = judge(item, response, t, seeded(model_args, t - 1, SEEDABLE).get("seed"))
     append(files[t], row)
+    if not row["rejected"]:
+        accepted_ids.add(item["id"])
     return [(t_next, item)] if row["rejected"] and (t_next := next_trial(item, t + 1)) else []
 
 
+accepted_ids = {i for t in done for i, row in done[t].items() if not row["rejected"]}
 jobs = [(t, item) for item in items if (t := next_trial(item))]
 print(f"{len(items) - len(jobs)} items finished already, {len(jobs)} to go (up to {args.max_trials} attempts each)")
 try:
-    drive(jobs, call, handle, args.concurrency, desc="rewrite requests")
+    drive(jobs, call, handle, args.concurrency, desc="rewrite items",
+          status=lambda: {"accepted": f"{len(accepted_ids)}/{len(items)}"})
 finally:
     for f in files.values():
         f.close()

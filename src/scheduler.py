@@ -11,35 +11,42 @@ from concurrent.futures import ThreadPoolExecutor
 from tqdm import tqdm
 
 
-def drive(jobs, call, handle, concurrency, desc="requests"):
+def drive(jobs, call, handle, concurrency, desc="items", status=None):
     """Run call(job) for every job on `concurrency` threads, in submission order.
 
     handle(job, result) runs on the main thread for each finished job (scoring and file writes stay there: the math grader
     uses SIGALRM) and returns the follow-up jobs to queue, if any. An exception from call() is raised here; it, like
     Ctrl-C, cancels every request still queued, so a resumed run picks up from what was written.
+
+    The progress bar counts the initial jobs (items): one is done when a result comes back with no follow-up (solved, or
+    out of tries), so its total stays fixed. Beside it: whatever status() returns (e.g. {"solved": n}) and the number of
+    requests sent.
     """
-    pool, finished, pending = ThreadPoolExecutor(concurrency), queue.Queue(), 0
-    bar = tqdm(total=0, desc=desc)
+    jobs = list(jobs)
+    pool, finished, pending, requests = ThreadPoolExecutor(concurrency), queue.Queue(), 0, 0
+    bar = tqdm(total=len(jobs), desc=desc)
 
     def submit(job):
-        nonlocal pending
+        nonlocal pending, requests
         pool.submit(call, job).add_done_callback(lambda fut: finished.put((job, fut)))
         pending += 1
-        bar.total += 1
+        requests += 1
 
     try:
         for job in jobs:
             submit(job)
-        bar.refresh()
         while pending:
             try:
                 job, fut = finished.get(timeout=1)  # a timeout keeps Ctrl-C responsive
             except queue.Empty:
                 continue
             pending -= 1
-            for follow_up in handle(job, fut.result()) or ():
+            follow_ups = list(handle(job, fut.result()) or ())
+            for follow_up in follow_ups:
                 submit(follow_up)
-            bar.update(1)
+            if not follow_ups:
+                bar.update(1)
+            bar.set_postfix({**(status() if status else {}), "requests": requests}, refresh=False)
     finally:
         pool.shutdown(wait=False, cancel_futures=True)  # Ctrl-C shouldn't wait for every queued request
         bar.close()

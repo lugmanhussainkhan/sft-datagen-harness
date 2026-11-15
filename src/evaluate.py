@@ -113,6 +113,13 @@ for name, b in benches.items():
         jobs += [(name, k, item) for k in b["records"] for item in b["items"] if item["id"] not in b["records"][k]]
 
 
+# for the progress bar: train, items with an accepted response; test, correct answers among the requests sent this time
+solved = {(name, item["id"]) for name, b in benches.items() for k in b["records"] for item in b["items"]
+          if args.train and item["id"] in b["records"][k] and accepted(b["records"][k][item["id"]])}
+n_items = sum(len(b["items"]) for b in benches.values())
+correct = [0, 0]
+
+
 def call(job):
     name, k, item = job
     b = benches[name]
@@ -127,13 +134,18 @@ def handle(job, response):
     row = {"id": item["id"], "response": text, "finish_reason": finish, "reasoning": reasoning, **b["bench"].score(item, text)}
     b["records"][k][item["id"]] = row
     append(b["files"][k], row)
+    correct[0] += bool(row.get("correct"))
+    correct[1] += 1
+    if args.train and accepted(row):
+        solved.add((name, item["id"]))
     if args.train and not args.all_runs and not accepted(row) and (k_next := next_try(b, item, k + 1)) is not None:
         return [(name, k_next, item)]
     return []
 
 
 try:
-    drive(jobs, call, handle, args.concurrency, desc=f"{split} requests")
+    drive(jobs, call, handle, args.concurrency, desc="train items" if args.train else "test requests",
+          status=lambda: {"solved": f"{len(solved)}/{n_items}"} if args.train else {"correct": f"{correct[0]}/{correct[1]}"})
 finally:
     for b in benches.values():
         for f in b["files"].values():
