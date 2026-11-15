@@ -9,6 +9,8 @@ src/benchmarks/    one module per benchmark: prompt(), score(), summarize()
 src/evaluate.py
 src/self_rewrite.py
 src/teacher_feedback.py
+src/kk_guides.py
+src/guided_generation.py
 src/prepare_gpqa.py
 ```
 
@@ -144,6 +146,49 @@ reference solution and the student's four attempts at that puzzle, each marked w
 
 Output goes to `outputs/student_style/kk_<teacher>/`: `tries.jsonl` (every try, appended as it arrives; resume by
 rerunning), `rewrites.jsonl`, `sft.jsonl`, `sft_gold.jsonl` and `summary.json` (including token use and cache reads).
+
+## KK solving guides
+
+```bash
+uv run --env-file .env src/kk_guides.py      # ANTHROPIC_API_KEY in .env (gitignored)
+```
+
+One Claude Haiku 5.5 call per puzzle of the self-rewrite SFT subset (`~/Projects/kk_claude-haiku-5-5/rewrites.jsonl`,
+2,674 puzzles, same order as its `train.jsonl`). The model gets fixed instructions, one worked example
+(`data/kk_guide_example.txt`, for puzzle `3ppl_100`), the puzzle and its answer, and writes a fill-in solving guide: what
+each statement means, and a step-by-step template whose blanks the student fills. Responses are appended to
+`data/kk_guides.jsonl` (idx, id, people, names, answer, guide, finish_reason, usage) as they arrive; rerunning resumes and
+`--force` starts over. Nothing is validated. `guided_generation.py` uses only the guide's "What each statement means" and
+"Template" sections.
+
+## Guided generation (kk)
+
+```bash
+uv run src/guided_generation.py --model hosted_vllm/Qwen/Qwen2.5-1.5B-Instruct --runs 4
+```
+
+The student gets a step-by-step fill-in solving guide and writes the answer. The prompt (`GUIDED_PROMPT`) is built
+from fixed instructions, rules and answer format, the dataset's question verbatim, and only the "What each statement
+means" and "Template" sections of the generated guide. Correct answers are paired with the plain eval prompt, without the guide, so the model learns to solve unaided.
+
+- **Items** are the puzzles of `--items` (default `~/Projects/kk_claude-haiku-5-5/rewrites.jsonl`, the self-rewrite SFT
+  subset) that have a guide in `--guides` (default `data/kk_guides.jsonl`; guides cut off for
+  length are skipped), joined on `id`. `--sample N` draws N of `--items` (seed 0) and keeps those with a guide.
+- **Runs, request args, scoring and resume** work as in `evaluate.py --train`: run *k* uses `seed + k`, `--model-args`
+  overrides the kk defaults, records are appended as answers arrive and an interrupted run resumes. A run is skipped once
+  every item is scored, so when the guides file has grown, rerunning only generates the new items. A request the server
+  rejects (usually a prompt that does not fit the context) is recorded as empty with its `error`. `--force` starts over.
+
+Output goes to `outputs/guided/<model>[_sample<N>][_limit<N>]/kk/` (`--out-dir` to change it):
+
+```
+r<k>.jsonl           scored records (guided prompt, response, pred, correct), appended as answers arrive
+r<k>.summary.json    accuracy, by_people, truncated, empty, rejected
+sft.jsonl            per item, the first run whose response is correct, not empty and not truncated, with the eval prompt
+sft_gold.jsonl       gold solutions for the same items
+```
+
+`--keep-guide-prompt` pairs the responses in `sft.jsonl` with the guided prompt instead.
 
 ## Data sources
 

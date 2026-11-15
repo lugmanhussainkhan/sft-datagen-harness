@@ -1,0 +1,24 @@
+Instructions
+Solve the puzzle below by filling in the template. Copy every line of the template and replace each ___ with your answer. Do not skip any line. Do not use a different method. Do not change the order of the steps. Write the CONCLUSION only after you finish Step 4.
+Question
+A very special island is inhabited only by knights and knaves. Knights always tell the truth, and knaves always lie. You meet 3 inhabitants: Michael, Zoey, and Ethan. Michael said, "Ethan is a knight if and only if Michael is a knight." Zoey said, "Zoey is a knight or Ethan is a knight." Ethan said, "Michael is a knave if and only if Zoey is a knave." So who is a knight and who is a knave?
+Rules
+
+* A knight's statement is always TRUE.
+* A knave's statement is always FALSE.
+* If a person's type does not match the truth of their statement, that guess is impossible.
+
+What each statement means
+
+* Michael's statement means: "Michael and Ethan are the same type." It is TRUE if they are the same type. It is FALSE if they are different types.
+* Zoey's statement means: "At least one of Zoey and Ethan is a knight." It is TRUE if one of them is a knight or if both are knights. It is FALSE only if both are knaves.
+* Ethan's statement means: "Michael and Zoey are the same type." It is TRUE if they are the same type. It is FALSE if they are different types. It does NOT say that Michael is a knave. It does not talk about Ethan.
+
+Template
+Step 1: Find Ethan. Case A: Suppose Michael is a knight. Then Michael's statement is TRUE. So Michael and Ethan are ___ types. So Ethan is a ___. Case B: Suppose Michael is a knave. Then Michael's statement is FALSE. So Michael and Ethan are ___ types. So Ethan is a ___. Compare Case A and Case B. Ethan's type in Case A is ___. Ethan's type in Case B is ___. So Ethan is a ___.
+Step 2: Find Zoey. From Step 1, Ethan is a ___. Try Zoey as a knight: "Zoey is a knight" is ___. "Ethan is a knight" is ___. So Zoey's statement is ___. A knight must say something TRUE. Does it match? ___. Try Zoey as a knave: "Zoey is a knight" is ___. "Ethan is a knight" is ___. So Zoey's statement is ___. A knave must say something FALSE. Does it match? ___. Keep the try that matches. So Zoey is a ___.
+Step 3: Find Michael. From Step 1, Ethan is a ___. So Ethan's statement must be ___. From Step 2, Zoey is a ___. Ethan's statement means Michael and Zoey are the same type. If his statement is TRUE, Michael is the same type as Zoey. If his statement is FALSE, Michael is the opposite type of Zoey. So Michael is a ___.
+Step 4: Check every person. You must write all three lines. Michael is a ___. Michael and Ethan are ___ types, so Michael's statement is ___. A ___ must say something ___. Does it match? ___. Zoey is a ___. "Zoey is a knight" is ___ and "Ethan is a knight" is ___, so Zoey's statement is ___. A ___ must say something ___. Does it match? ___. Ethan is a ___. Michael and Zoey are ___ types, so Ethan's statement is ___. A ___ must say something ___. Does it match? ___. If any answer to "Does it match?" is no, your answer is wrong. Go back to Step 1 and find the mistake. Write the CONCLUSION only when all three answers are yes.
+Answer format
+Fill each ___ with "knight" or "knave". Keep this exact order: Michael, Zoey, Ethan.
+CONCLUSION: (1) Michael is a ___ (2) Zoey is a ___ (3) Ethan is a ___
