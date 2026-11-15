@@ -123,6 +123,28 @@ files. So the run can be stopped at any point (Ctrl-C, a crash, a killed job) an
 Rerun the same command to resume. Ctrl-C exits at once and still rebuilds the last four files from what has been
 written. `--force` starts over.
 
+## Student-style rewrite (kk)
+
+```bash
+uv run src/prepare_student_style.py
+uv run src/student_style_rewrite.py --teacher anthropic/claude-haiku-5-5
+```
+
+A teacher rewrites Haiku's reference solution in the student's own style. The system prompt is the instruction plus four
+of the student's correct answers to other puzzles (fixed, so Anthropic caches it). The user prompt is the puzzle, the
+reference solution and the student's four attempts at that puzzle, each marked with how its final answer scored.
+
+- `prepare_student_style.py` writes `data/kk_student_style.jsonl`: the 2,674 puzzles of the self-rewrite SFT subset
+  (`--train-set`) with Haiku's solution and the four `evaluate.py --train` attempts (`--trials`, `r0`–`r3.jsonl`). It also
+  writes `data/kk_student_style_examples.jsonl`, the few-shot examples (`EXAMPLES`, picked by hand). The base model's
+  correct answers on 3+ people almost always contain a wrong step somewhere, so the teacher is told to copy their style
+  but not their logic.
+- **Accepted** means not empty, not truncated, correct, and not mentioning the reference, the attempts or the student.
+  Each item gets up to `--max-tries` (3) teacher calls.
+
+Output goes to `outputs/student_style/kk_<teacher>/`: `tries.jsonl` (every try, appended as it arrives; resume by
+rerunning), `rewrites.jsonl`, `sft.jsonl`, `sft_gold.jsonl` and `summary.json` (including token use and cache reads).
+
 ## Data sources
 
 IFEval (google-research@f8d6d14), IFBench (allenai/IFBench@cd189a9), MATH (aakaran/finetuning-with-sampling@b3af646),
