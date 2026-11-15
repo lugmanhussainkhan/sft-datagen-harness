@@ -30,6 +30,9 @@ ap.add_argument("--limit", type=int, help="first N items only")
 ap.add_argument("--concurrency", type=int, default=32)
 ap.add_argument("--out-dir", type=Path, help="default: outputs/self_rewrite/<bench>_<last part of --model>")
 args = ap.parse_args()
+model_name, provider, *_ = litellm.get_llm_provider(args.model)
+supported = litellm.get_supported_openai_params(model=model_name, custom_llm_provider=provider)
+SEEDABLE = supported is None or "seed" in supported  # e.g. Anthropic rejects seed; its runs differ only by sampling
 
 bench = importlib.import_module(f"benchmarks.{args.bench}")
 with open(Path(__file__).resolve().parents[1] / f"data/{args.bench}_train.jsonl") as f:
@@ -46,6 +49,8 @@ accepted = {}
 pending = items
 for t in range(args.max_trials):
     trial_args = {**model_args, "seed": model_args.get("seed", 0) + t}
+    if not SEEDABLE:
+        del trial_args["seed"]
     pool = ThreadPoolExecutor(args.concurrency)
     try:
         responses = list(tqdm(pool.map(lambda item, kw=trial_args: litellm.completion(
@@ -61,7 +66,7 @@ for t in range(args.max_trials):
         reason = ("empty" if not text else "truncated" if finish == "length"
                   else "wrong answer" if not bench.score(item, text)["correct"]
                   else "mentions the reference" if LEAK.search(text) else None)
-        attempts[item["id"]].append({"trial": t + 1, "seed": trial_args["seed"], "response": text,
+        attempts[item["id"]].append({"trial": t + 1, "seed": trial_args.get("seed"), "response": text,
                                      "finish_reason": finish, "rejected": reason})
         if reason:
             still.append(item)

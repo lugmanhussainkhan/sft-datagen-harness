@@ -39,6 +39,9 @@ ap.add_argument("--concurrency", type=int, default=32)
 ap.add_argument("--name", help="folder under the output root; default: last part of --model")
 ap.add_argument("--force", action="store_true", help="redo the selected benches from scratch")
 args = ap.parse_args()
+model_name, provider, *_ = litellm.get_llm_provider(args.model)
+supported = litellm.get_supported_openai_params(model=model_name, custom_llm_provider=provider)
+SEEDABLE = supported is None or "seed" in supported  # e.g. Anthropic rejects seed; its runs differ only by sampling
 
 split = "train" if args.train else "test"
 root = Path("outputs/train") if args.train else Path("runs")
@@ -69,7 +72,10 @@ for name in args.bench:
             print(f"{summary_path} exists, skipping")
             continue
         model_args = {"num_retries": 3, **bench.REQUEST, **args.model_args}
-        model_args["seed"] = model_args.get("seed", 0) + k
+        if SEEDABLE:
+            model_args["seed"] = model_args.get("seed", 0) + k
+        else:
+            model_args.pop("seed", None)
 
         records = {}  # resume: keep what an interrupted run already scored
         if out.exists():
