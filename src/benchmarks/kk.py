@@ -9,7 +9,7 @@ import re
 
 from . import accuracy
 
-REQUEST = {"max_tokens": 2048}
+REQUEST = {"max_tokens": 16384}  # small models reason at length, even on 2-person puzzles
 RUNS = 1
 METRIC = "accuracy"
 PROMPT = """Your task is to solve a logical reasoning problem. You are given set of statements from which you must logically deduce the identity of a set of characters.
