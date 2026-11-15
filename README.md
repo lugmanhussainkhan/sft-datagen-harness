@@ -90,37 +90,38 @@ uv run src/teacher_feedback.py --bench math --sample 1000 \
     --student hosted_vllm/Qwen/Qwen2.5-3B-Instruct --teacher anthropic/claude-haiku-5-5
 ```
 
-The student answers, a teacher reviews the attempt and writes feedback that points out the mistake without giving the
-answer away, and the student writes a new full solution with its earlier attempts and the feedback in context. This
-repeats for up to `--max-turns` (3) rounds per item. The teacher writes no solution tokens, so every accepted answer
-comes from the student.
+The student answers, a teacher writes a step-by-step review of everything wrong with the attempt without giving the
+answer away, and the student writes a new full solution with that attempt and the review in front of it. There is one
+round per item. The teacher writes no solution tokens, so every accepted answer comes from the student.
 
-- **Turn 0** comes from `evaluate.py --train`'s `r0.jsonl` for the same student, `--sample` and `--limit` when that file
-  exists (`--initial` points elsewhere). Only the items it lacks are generated. The items are those of
+- **First answers** come from `evaluate.py --train`'s `r0.jsonl` for the same student, `--sample` and `--limit` when that
+  file exists (`--initial` points elsewhere). Only the items it lacks are generated. The items are those of
   `data/<bench>_train.jsonl`, drawn the same way as `evaluate.py --train --sample N`.
-- **Accepted** means not empty, not truncated and correct. After turn 0 the answer also must not mention earlier
-  attempts or feedback.
-- **The teacher** sees the problem, the reference solution, each attempt and what was wrong with it (wrong answer, no
-  answer, cut off, refers to earlier attempts), and keeps its own conversation across turns. Feedback that states the
-  answer in the bench's answer format (`\boxed{}`, or a full kk CONCLUSION) is sent back to be rewritten, up to 3 tries.
-- **The student** gets one user message: the eval prompt, then `--- Attempt n ---` / `--- Feedback on attempt n ---`
-  blocks. If a request is rejected (usually because the history no longer fits the context window), that item stops.
+- **Accepted** means not empty, not truncated and correct. A revision also must not mention the earlier attempt or the
+  review.
+- **The teacher** reviews wrong, unanswered and truncated first answers (empty ones get no review). It sees the problem,
+  the reference solution, the attempt and what is wrong with it, and lists every mistake in order, each with where it
+  is and why it is wrong. A review that states the answer in the bench's answer format (`\boxed{}`, or a full kk
+  CONCLUSION) is sent back to be rewritten, up to 3 tries.
+- **The student** gets one user message: the eval prompt, then `--- Your attempt ---` and `--- Teacher's review ---`. If
+  the request is rejected (usually because it no longer fits the context window), the item has no revision.
 
 Output goes to `outputs/teacher_feedback/<bench>_<student>_by_<teacher>/`:
 
 ```
-feedback<t>.jsonl    every teacher try in round t (feedback, whether it reveals the answer), appended as each arrives
-turn<t>.jsonl        every student answer in round t (with the feedback it answered, and its score), appended as each arrives
-dialogues.jsonl      every item with its accepted response, accepted_turn and all its turns
-sft.jsonl            accepted responses (any turn) as user/assistant pairs with the plain eval prompt
+first.jsonl          every first answer and its score
+feedback.jsonl       every teacher try (review, whether it reveals the answer)
+revised.jsonl        every revision and its score
+dialogues.jsonl      every item with its accepted response, accepted_from (first/revised), first answer, reviews, revision
+sft.jsonl            accepted responses (first or revised) as user/assistant pairs with the plain eval prompt
 sft_gold.jsonl       gold solutions for the same items
-summary.json         accepted_at_turn, rejections per turn, feedback rewrites, ...
+summary.json         accepted, fixed_by_review, fix_rate, rejections, review rewrites, ...
 ```
 
-Every teacher and student response is written to disk the moment it arrives, and each item's next request is worked
-out from those files. So the run can be stopped at any point (Ctrl-C, a crash, a killed job) and only the requests in
-flight are lost. Rerun the same command to resume. Ctrl-C exits at once and still rebuilds the last four files from
-what has been written. `--force` starts over.
+Every response is appended to its file the moment it arrives, and each item's next request is worked out from those
+files. So the run can be stopped at any point (Ctrl-C, a crash, a killed job) and only the requests in flight are lost.
+Rerun the same command to resume. Ctrl-C exits at once and still rebuilds the last four files from what has been
+written. `--force` starts over.
 
 ## Data sources
 
