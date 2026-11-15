@@ -8,6 +8,7 @@ dependencies = [
     "litellm>=1.83.0",
     "tenacity",  # litellm needs it for num_retries
     "tqdm>=4.66",
+    "httpx",  # sizes LiteLLM's connection pool to --concurrency
     "huggingface_hub>=0.24",  # only for src/prepare_gpqa.py
     # MATH grader (aakaran/finetuning-with-sampling)
     "sympy>=1.12",

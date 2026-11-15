@@ -2219,6 +2219,7 @@ source = { virtual = "." }
 dependencies = [
     { name = "absl-py" },
     { name = "emoji" },
+    { name = "httpx" },
     { name = "huggingface-hub" },
     { name = "immutabledict" },
     { name = "langdetect" },
@@ -2237,6 +2238,7 @@ dependencies = [
 requires-dist = [
     { name = "absl-py" },
     { name = "emoji" },
+    { name = "httpx" },
     { name = "huggingface-hub", specifier = ">=0.24" },
     { name = "immutabledict" },
     { name = "langdetect" },

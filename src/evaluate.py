@@ -20,6 +20,7 @@ import statistics
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
+import httpx
 import litellm
 from tqdm import tqdm
 
@@ -39,6 +40,9 @@ ap.add_argument("--concurrency", type=int, default=32)
 ap.add_argument("--name", help="folder under the output root; default: last part of --model")
 ap.add_argument("--force", action="store_true", help="redo the selected benches from scratch")
 args = ap.parse_args()
+# LiteLLM's HTTP client keeps httpx's default pool of 100 connections, so more threads than that just queue
+pool_limits = httpx.Limits(max_connections=args.concurrency, max_keepalive_connections=args.concurrency)
+litellm.sync_transport = httpx.HTTPTransport(limits=pool_limits)
 model_name, provider, *_ = litellm.get_llm_provider(args.model)
 supported = litellm.get_supported_openai_params(model=model_name, custom_llm_provider=provider)
 SEEDABLE = supported is None or "seed" in supported  # e.g. Anthropic rejects seed; its runs differ only by sampling
