@@ -10,7 +10,7 @@ from .math_grader import grade_answer
 from .math_parse_utils import parse_answer
 
 REQUEST = {"max_tokens": 1856}
-RUNS = 2
+RUNS = 3
 METRIC = "accuracy"
 
 # Eval prompt, also the user turn of the SFT data so training and evaluation match.

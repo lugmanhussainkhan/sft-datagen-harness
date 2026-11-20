@@ -4,7 +4,7 @@ from .. import ifeval
 from .instructions_registry import INSTRUCTION_DICT
 
 REQUEST = ifeval.REQUEST
-RUNS = 1
+RUNS = 3
 METRIC = ifeval.METRIC
 prompt = ifeval.prompt
 summarize = ifeval.summarize

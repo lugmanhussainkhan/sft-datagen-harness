@@ -33,10 +33,10 @@ uv run src/evaluate.py --bench math gpqa --model hosted_vllm/Qwen/Qwen2.5-3B-Ins
 | Bench | Items | Runs | Metric |
 |---|---|---|---|
 | `ifeval` | 541 | 3 | prompt-level strict accuracy |
-| `ifbench` | 300 | 1 | prompt-level strict accuracy |
-| `math` (MATH levels 3–5) | 1,024 | 2 | accuracy |
+| `ifbench` | 300 | 3 | prompt-level strict accuracy |
+| `math` (MATH levels 3–5) | 1,024 | 3 | accuracy |
 | `gpqa` (Diamond) | 198 | 3 | accuracy |
-| `mmlu_pro` (5-shot) | 12,032 | 1 | accuracy |
+| `mmlu_pro` (5-shot) | 12,032 | 3 | accuracy |
 | `kk` (Knights and Knaves, 2–8 people) | 700 | 3 | accuracy (every identity right; `by_people` in the summary) |
 
 `--bench` defaults to all but `mmlu_pro`, which runs only when named (`--bench mmlu_pro`). `--model-args` is passed to `litellm.completion` and overrides the bench defaults

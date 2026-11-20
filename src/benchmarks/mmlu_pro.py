@@ -7,7 +7,7 @@ from pathlib import Path
 from . import accuracy
 
 REQUEST = {"max_tokens": 2048, "stop": ["Question:"]}  # stop as the official script does
-RUNS = 1
+RUNS = 3
 METRIC = "accuracy"
 summarize = accuracy
 
