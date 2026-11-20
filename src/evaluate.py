@@ -1,12 +1,12 @@
-"""Evaluate a model on the benchmarks. Results go to runs/<model>/<bench>/r<k>.jsonl (+ r<k>.summary.json); run k
-uses seed + k. Every request of every selected bench and run goes through one pool of --concurrency threads, so runs
-overlap instead of waiting for each other. Finished runs are skipped, interrupted ones resume from their .jsonl, and
-runs/<model>/report.json plus a table of every model in runs/ are refreshed at the end.
+"""Evaluate a model on the benchmarks. Results go to runs/<model>/<bench>/r<k>.jsonl (+ r<k>.summary.json). No seed is
+sent, so runs differ by sampling alone. Every request of every selected bench and run goes through one pool of
+--concurrency threads, so runs overlap instead of waiting for each other. Finished runs are skipped, interrupted ones
+resume from their .jsonl, and runs/<model>/report.json plus a table of every model in runs/ are refreshed at the end.
 
 --train runs the same harness (prompt, request defaults, scoring) on data/<bench>_train.jsonl instead, writing to
 outputs/train/<model>/ (benches without a train split are skipped). There --runs is the maximum number of tries per item:
 try k + 1 is sent only for items whose tries so far gave no correct, non-empty, untruncated response, and it is queued as
-soon as try k comes back. Try k is written to r<k>.jsonl (seed + k). Each bench gets summary.json (solved items, the try
+soon as try k comes back. Try k is written to r<k>.jsonl. Each bench gets summary.json (solved items, the try
 that solved them), sft.jsonl (per item, its accepted response as a user/assistant pair with the eval prompt) and
 sft_gold.jsonl (the reference solutions for the same items). Rerunning with a larger --runs gives the unsolved items more
 tries. --all-runs sends every run to every item instead (prepare_student_style.py needs all of a puzzle's attempts).
@@ -27,13 +27,14 @@ from pathlib import Path
 import httpx
 import litellm
 
-from scheduler import answer, append, drive, read_jsonl, reopen, seeded
+from scheduler import answer, append, drive, read_jsonl, reopen
 
 litellm.suppress_debug_info = True
 BENCHES = ["ifeval", "ifbench", "math", "gpqa", "mmlu_pro", "kk"]
+DEFAULT_BENCHES = [b for b in BENCHES if b != "mmlu_pro"]  # mmlu_pro runs only when named in --bench
 
 ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-ap.add_argument("--bench", nargs="+", choices=BENCHES, default=BENCHES, help="default: all")
+ap.add_argument("--bench", nargs="+", choices=BENCHES, default=DEFAULT_BENCHES, help="default: all but mmlu_pro")
 ap.add_argument("--model", required=True, help="LiteLLM model string, e.g. hosted_vllm/<served-name>")
 ap.add_argument("--model-args", type=json.loads, default={}, help="JSON passed to litellm.completion; overrides bench defaults")
 ap.add_argument("--runs", type=int, help="default: each bench's RUNS; with --train, the maximum tries per item")
@@ -49,9 +50,6 @@ args = ap.parse_args()
 # LiteLLM's HTTP client keeps httpx's default pool of 100 connections, so more threads than that just queue
 pool_limits = httpx.Limits(max_connections=args.concurrency, max_keepalive_connections=args.concurrency)
 litellm.sync_transport = httpx.HTTPTransport(limits=pool_limits)
-model_name, provider, *_ = litellm.get_llm_provider(args.model)
-supported = litellm.get_supported_openai_params(model=model_name, custom_llm_provider=provider)
-SEEDABLE = supported is None or "seed" in supported  # e.g. Anthropic rejects seed; its runs differ only by sampling
 
 split = "train" if args.train else "test"
 root = Path("outputs/train") if args.train else Path("runs")
@@ -124,7 +122,7 @@ def call(job):
     name, k, item = job
     b = benches[name]
     return litellm.completion(model=args.model, messages=[{"role": "user", "content": b["bench"].prompt(item)}],
-                              **seeded(b["model_args"], k, SEEDABLE))
+                              **b["model_args"])
 
 
 def handle(job, response):
@@ -159,7 +157,7 @@ for name, b in benches.items():
             summary = {"metric": bench.METRIC, **bench.summarize(done), "n": len(done),
                        "truncated": sum(r["finish_reason"] == "length" for r in done),
                        "empty": sum(not r["response"] for r in done),
-                       "model": args.model, "model_args": seeded(b["model_args"], k, SEEDABLE), "split": split,
+                       "model": args.model, "model_args": b["model_args"], "split": split,
                        "sample": args.sample, "limit": args.limit}
             (bench_dir / f"r{k}.summary.json").write_text(json.dumps(summary, indent=2))
             print(f"{name} r{k}: {bench.METRIC} {100 * summary[bench.METRIC]:.2f} "

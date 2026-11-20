@@ -1,5 +1,5 @@
 """Self-rewrite: the model sees the instruction, a training question and its reference solution, and writes its own.
-Up to --max-trials attempts per item (seed + t); kept if not empty, not truncated, correct, and not mentioning the reference.
+Up to --max-trials attempts per item; kept if not empty, not truncated, correct, and not mentioning the reference.
 
 Attempt t is sent only for items no earlier attempt accepted, and it is queued as soon as attempt t - 1 comes back, all in
 one pool of --concurrency threads, so attempts overlap instead of waiting for each other. Each response is scored and
@@ -21,7 +21,7 @@ from pathlib import Path
 import httpx
 import litellm
 
-from scheduler import answer, append, drive, read_jsonl, reopen, seeded
+from scheduler import answer, append, drive, read_jsonl, reopen
 
 litellm.suppress_debug_info = True
 LEAK = re.compile(r"reference (?:solution|answer)|(?:given|provided|above|original) (?:solution|answer)"
@@ -42,9 +42,6 @@ OUTPUTS = ["rewrites.jsonl", "sft.jsonl", "sft_gold.jsonl", "summary.json"]
 # LiteLLM's HTTP client keeps httpx's default pool of 100 connections, so more threads than that just queue
 pool_limits = httpx.Limits(max_connections=args.concurrency, max_keepalive_connections=args.concurrency)
 litellm.sync_transport = httpx.HTTPTransport(limits=pool_limits)
-model_name, provider, *_ = litellm.get_llm_provider(args.model)
-supported = litellm.get_supported_openai_params(model=model_name, custom_llm_provider=provider)
-SEEDABLE = supported is None or "seed" in supported  # e.g. Anthropic rejects seed; its runs differ only by sampling
 
 bench = importlib.import_module(f"benchmarks.{args.bench}")
 data = getattr(bench, "REWRITE_DATA", f"{args.bench}_train")  # where the reference solutions come from
@@ -62,12 +59,12 @@ if args.force:
         path.unlink(missing_ok=True)
 
 
-def judge(item, response, t, seed):
+def judge(item, response, t):
     text, finish, _ = answer(response)
     reason = ("empty" if not text else "truncated" if finish == "length"
               else "wrong answer" if not bench.score(item, text)["correct"]
               else "mentions the reference" if LEAK.search(text) else None)
-    return {"id": item["id"], "trial": t, "seed": seed, "response": text, "finish_reason": finish, "rejected": reason}
+    return {"id": item["id"], "trial": t, "response": text, "finish_reason": finish, "rejected": reason}
 
 
 done, files = {}, {}  # per attempt t: the records written so far (by id), and the open attempt<t>.jsonl
@@ -90,12 +87,12 @@ def next_trial(item, start=1):
 def call(job):
     t, item = job
     return litellm.completion(model=args.model, messages=[{"role": "user", "content": bench.rewrite_prompt(item)}],
-                              **seeded(model_args, t - 1, SEEDABLE))
+                              **model_args)
 
 
 def handle(job, response):
     t, item = job
-    row = done[t][item["id"]] = judge(item, response, t, seeded(model_args, t - 1, SEEDABLE).get("seed"))
+    row = done[t][item["id"]] = judge(item, response, t)
     append(files[t], row)
     if not row["rejected"]:
         accepted_ids.add(item["id"])

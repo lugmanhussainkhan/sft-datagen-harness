@@ -10,7 +10,7 @@ import re
 from . import accuracy
 
 REQUEST = {"max_tokens": 16384}  # small models reason at length, even on 2-person puzzles
-RUNS = 1
+RUNS = 3
 METRIC = "accuracy"
 # self_rewrite.py reads this instead of kk_train: the 6,018 train puzzles Claude Haiku 5.5 solved correctly, with its
 # solution as the reference (kk_train's own solutions follow one fixed template)

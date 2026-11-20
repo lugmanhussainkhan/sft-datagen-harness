@@ -111,12 +111,6 @@ pool_limits = httpx.Limits(max_connections=args.concurrency, max_keepalive_conne
 litellm.sync_transport = httpx.HTTPTransport(limits=pool_limits)
 
 
-def seedable(model):  # e.g. Anthropic rejects seed; its requests differ only by sampling
-    model_name, provider, *_ = litellm.get_llm_provider(model)
-    supported = litellm.get_supported_openai_params(model=model_name, custom_llm_provider=provider)
-    return supported is None or "seed" in supported
-
-
 def short(model):
     return model.split("/")[-1]
 
@@ -131,7 +125,6 @@ out_dir = args.out_dir or Path("outputs/teacher_feedback") / f"{args.bench}_{sho
 out_dir.mkdir(parents=True, exist_ok=True)
 student_args = {"num_retries": 3, **bench.REQUEST, **args.student_args}
 teacher_args = {"num_retries": 3, **TEACHER_REQUEST, **args.teacher_args}
-SEEDABLE = {args.student: seedable(args.student), args.teacher: seedable(args.teacher)}
 initial = args.initial or (Path("outputs/train") / (short(args.student) + (f"_sample{args.sample}" if args.sample else "")
                                                      + (f"_limit{args.limit}" if args.limit else "")) / args.bench / "r0.jsonl")
 
@@ -151,11 +144,8 @@ def read(path):
                     continue
 
 
-def complete(model, kwargs, messages, seed):
+def complete(model, kwargs, messages):
     """The answer part of a completion (anything up to </think> dropped) and its finish reason. Runs on a pool thread."""
-    kwargs = {**kwargs, "seed": kwargs.get("seed", 0) + seed}
-    if not SEEDABLE[model]:
-        del kwargs["seed"]
     choice = litellm.completion(model=model, messages=messages, **kwargs).choices[0]
     text = choice.message.content or ""
     text = "" if text.lstrip().startswith("<think>") and "</think>" not in text else text  # cut off while thinking
@@ -242,7 +232,7 @@ def step(item):
     i = item["id"]
     if i not in firsts:
         msgs = [{"role": "user", "content": bench.prompt(item)}]
-        pending[pool.submit(complete, args.student, student_args, msgs, 0)] = (item, "first")
+        pending[pool.submit(complete, args.student, student_args, msgs)] = (item, "first")
         return
     if finished(i):
         bar.update(1)
@@ -250,9 +240,9 @@ def step(item):
     tries = feedback.get(i, [])
     if tries and tries[-1]["feedback"] and not tries[-1]["reveals"]:  # a usable review: the student's turn
         msgs = [{"role": "user", "content": student_prompt(item, tries[-1]["feedback"])}]
-        pending[pool.submit(complete, args.student, student_args, msgs, 1)] = (item, "revised")
+        pending[pool.submit(complete, args.student, student_args, msgs)] = (item, "revised")
     elif len(tries) < FEEDBACK_TRIES:
-        pending[pool.submit(complete, args.teacher, teacher_args, teacher_messages(item, tries), 100 * len(tries))] = (item, "teacher")
+        pending[pool.submit(complete, args.teacher, teacher_args, teacher_messages(item, tries))] = (item, "teacher")
     else:
         revised[i] = {"id": i, "response": None,
                       "rejected": "review reveals the answer" if tries[-1]["feedback"] else "empty review"}

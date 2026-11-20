@@ -37,11 +37,11 @@ uv run src/evaluate.py --bench math gpqa --model hosted_vllm/Qwen/Qwen2.5-3B-Ins
 | `math` (MATH levels 3–5) | 1,024 | 2 | accuracy |
 | `gpqa` (Diamond) | 198 | 3 | accuracy |
 | `mmlu_pro` (5-shot) | 12,032 | 1 | accuracy |
-| `kk` (Knights and Knaves, 2–8 people) | 700 | 1 | accuracy (every identity right; `by_people` in the summary) |
+| `kk` (Knights and Knaves, 2–8 people) | 700 | 3 | accuracy (every identity right; `by_people` in the summary) |
 
-`--bench` defaults to all. `--model-args` is passed to `litellm.completion` and overrides the bench defaults
-(e.g. `max_tokens`). Run *k* uses `seed + k`. Every request of every selected bench and run goes through one pool of
-`--concurrency` threads, so runs overlap: the next run's requests start while the previous run's last ones finish.
+`--bench` defaults to all but `mmlu_pro`, which runs only when named (`--bench mmlu_pro`). `--model-args` is passed to `litellm.completion` and overrides the bench defaults
+(e.g. `max_tokens`). No seed is sent, so runs differ by sampling alone. Every request of every selected bench and run
+goes through one pool of `--concurrency` threads, so runs overlap: the next run's requests start while the previous run's last ones finish.
 
 ```
 runs/<model>/report.json                 mean of each bench's metric over its runs
@@ -61,7 +61,7 @@ uv run src/evaluate.py --train --bench kk math --sample 1000 --runs 4 --model <s
 `--train` runs the same harness (prompt, request defaults, scoring) on `data/<bench>_train.jsonl` and writes to
 `outputs/train/<model>[_sample<N>]/`. Benches without a train split are skipped. `--runs` is the maximum number of tries
 per item: try *k* + 1 goes only to items whose tries so far gave no correct, non-empty, untruncated response, and it is
-queued as soon as try *k* comes back, in the same pool as everything else. Try *k* uses `seed + k` and is written to
+queued as soon as try *k* comes back, in the same pool as everything else. Try *k* is written to
 `r<k>.jsonl`; interrupted runs resume, and rerunning with a larger `--runs` gives unsolved items more tries. Each bench
 gets `summary.json` (solve rate, the try that solved each item, requests), `sft.jsonl` (per solved item, its accepted
 response paired with the eval prompt) and `sft_gold.jsonl` (the gold solutions for the same items). `--all-runs` sends
@@ -182,7 +182,7 @@ means" and "Template" sections of the generated guide. Correct answers are paire
   length are skipped), in the order of the self-rewrite subset's `train.jsonl`. Their question and gold solution come
   from `--items` (default `data/kk_train_haiku.jsonl`), joined on `id`. `--sample N` draws N of these (seed 0).
 - **Tries, request args, scoring and resume** work as in `evaluate.py --train`: `--runs` is the maximum number of tries
-  per item, try *k* + 1 goes only to unsolved items and is queued as soon as try *k* comes back, try *k* uses `seed + k`,
+  per item, try *k* + 1 goes only to unsolved items and is queued as soon as try *k* comes back,
   `--model-args` overrides the kk defaults, records are appended as answers arrive and an interrupted run resumes.
   Rerunning with a larger `--runs` gives unsolved items more tries. A request the server rejects (usually a prompt that
   does not fit the context) is recorded as empty with its `error` and not retried. `--force` starts over.

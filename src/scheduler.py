@@ -85,12 +85,3 @@ def answer(response):
     text = "" if text.lstrip().startswith("<think>") and "</think>" not in text else text  # cut off while thinking
     return text.rpartition("</think>")[2].strip(), response.choices[0].finish_reason, getattr(message, "reasoning_content", None)
 
-
-def seeded(model_args, k, seedable):
-    """model_args for run/try k: seed + k, or no seed for models that reject it."""
-    args = dict(model_args)
-    if seedable:
-        args["seed"] = args.get("seed", 0) + k
-    else:
-        args.pop("seed", None)
-    return args

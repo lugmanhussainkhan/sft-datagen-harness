@@ -98,8 +98,6 @@ OUTPUTS = ["rewrites.jsonl", "sft.jsonl", "sft_gold.jsonl", "summary.json"]
 pool_limits = httpx.Limits(max_connections=args.concurrency, max_keepalive_connections=args.concurrency)
 litellm.sync_transport = httpx.HTTPTransport(limits=pool_limits)
 model_name, provider, *_ = litellm.get_llm_provider(args.teacher)
-supported = litellm.get_supported_openai_params(model=model_name, custom_llm_provider=provider)
-SEEDABLE = supported is None or "seed" in supported  # e.g. Anthropic rejects seed; its tries differ only by sampling
 
 
 def read(path):
@@ -146,10 +144,7 @@ def messages(item):
 
 def complete(item, t):
     """The answer part of a completion (anything up to </think> dropped), its finish reason and token usage."""
-    kwargs = {**teacher_args, "seed": teacher_args.get("seed", 0) + t - 1}
-    if not SEEDABLE:
-        del kwargs["seed"]
-    r = litellm.completion(model=args.teacher, messages=messages(item), **kwargs)
+    r = litellm.completion(model=args.teacher, messages=messages(item), **teacher_args)
     text = r.choices[0].message.content or ""
     text = "" if text.lstrip().startswith("<think>") and "</think>" not in text else text  # cut off while thinking
     details = getattr(r.usage, "prompt_tokens_details", None)

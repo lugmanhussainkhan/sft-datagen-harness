@@ -9,7 +9,7 @@ joined on id. --sample N draws N of these items (seed 0); --limit N then keeps t
 
 --runs is the maximum number of tries per item. Try k + 1 is sent only for items whose tries so far gave no correct,
 non-empty, untruncated response, and it is queued as soon as try k comes back, all in one pool of --concurrency threads,
-so the GPU never waits for a run to drain. Try k uses seed + k and is appended to r<k>.jsonl as it arrives. Rerun the same
+so the GPU never waits for a run to drain. Try k is appended to r<k>.jsonl as it arrives. Rerun the same
 command to resume an interrupted run, or with a larger --runs to give unsolved items more tries. --force starts over. A
 request the server rejects (usually a prompt that does not fit the context) is recorded with its error and not retried.
 
@@ -34,7 +34,7 @@ import httpx
 import litellm
 
 from benchmarks import kk
-from scheduler import answer, append, drive, read_jsonl, reopen, seeded
+from scheduler import answer, append, drive, read_jsonl, reopen
 
 litellm.suppress_debug_info = True
 ROOT = Path(__file__).resolve().parents[1]
@@ -45,7 +45,7 @@ ap.add_argument("--model-args", type=json.loads, default={}, help=f"JSON passed 
 ap.add_argument("--guides", type=Path, default=ROOT / "data/kk_guides.jsonl")
 ap.add_argument("--items", type=Path, default=ROOT / "data/kk_train_haiku.jsonl",
                 help="puzzles with id, quiz, names, answer, solution")
-ap.add_argument("--runs", type=int, default=1, help="maximum tries per item; try k uses seed + k")
+ap.add_argument("--runs", type=int, default=1, help="maximum tries per item")
 ap.add_argument("--sample", type=int, help="random subset of N of the guided items (seed 0)")
 ap.add_argument("--limit", type=int, help="first N items only")
 ap.add_argument("--concurrency", type=int, default=32)
@@ -56,9 +56,6 @@ args = ap.parse_args()
 # LiteLLM's HTTP client keeps httpx's default pool of 100 connections, so more threads than that just queue
 pool_limits = httpx.Limits(max_connections=args.concurrency, max_keepalive_connections=args.concurrency)
 litellm.sync_transport = httpx.HTTPTransport(limits=pool_limits)
-model_name, provider, *_ = litellm.get_llm_provider(args.model)
-supported = litellm.get_supported_openai_params(model=model_name, custom_llm_provider=provider)
-SEEDABLE = supported is None or "seed" in supported  # e.g. Anthropic rejects seed; its runs differ only by sampling
 
 
 # The student prompt is built here; only "What each statement means" and "Template" are taken from the generated guide.
@@ -156,7 +153,7 @@ def call(job):
     k, item = job
     try:
         return litellm.completion(model=args.model, messages=[{"role": "user", "content": guided_prompt(item)}],
-                                  **seeded(model_args, k, SEEDABLE)), None
+                                  **model_args), None
     except litellm.BadRequestError as e:
         return None, f"{type(e).__name__}: {str(e)[:500]}"
 
